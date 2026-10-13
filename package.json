@@ -1,0 +1,17 @@
+{
+  "name": "pharos-season-of-ai",
+  "version": "1.0.0",
+  "description": "Builds para o Pharos Season of AI (Agent Arena) usando Chain MCP e Developer Docs MCP",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "docs": "node tasks/01-doc-search-cli/cli.js",
+    "read": "node tasks/02-read-contract-state/read.js",
+    "monitor": "node tasks/03-event-monitor/monitor.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "viem": "^2.57.5"
+  }
+}
