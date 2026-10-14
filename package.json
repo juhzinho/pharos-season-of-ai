@@ -7,7 +7,13 @@
   "scripts": {
     "docs": "node tasks/01-doc-search-cli/cli.js",
     "read": "node tasks/02-read-contract-state/read.js",
-    "monitor": "node tasks/03-event-monitor/monitor.js"
+    "agent": "node tasks/02-read-contract-state/agent.js",
+    "agent:ai": "node tasks/02-read-contract-state/agent-ai.js",
+    "monitor": "node tasks/03-event-monitor/monitor.js",
+    "web": "node scripts/dev-server.js",
+    "test": "node --test test/intent.test.js && node test/run.js",
+    "test:unit": "node --test test/intent.test.js",
+    "test:e2e": "node test/run.js"
   },
   "license": "MIT",
   "dependencies": {

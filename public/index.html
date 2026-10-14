@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pharos Contract Reader · Season of AI</title>
+  <meta name="description" content="Reads the live state of Pharos contracts through Chain MCP and explains it in plain language." />
+  <style>
+    :root {
+      --bg: #f5f6fb; --card: #fff; --ink: #0d1330; --muted: #5b6380; --line: #e3e6f0;
+      --brand: #0b1fd1; --brand-soft: #eef0ff; --ok: #0a7d4f; --warn: #b42318; --mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--ink); background: var(--bg); }
+    header { background: var(--card); border-bottom: 1px solid var(--line); }
+    .wrap { max-width: 1040px; margin: 0 auto; padding: 0 20px; }
+    .top { display: flex; align-items: center; justify-content: space-between; height: 64px; gap: 12px; }
+    .brand { font-weight: 700; letter-spacing: .02em; display: flex; gap: 10px; align-items: center; }
+    .brand small { font-weight: 500; color: var(--muted); letter-spacing: 0; }
+    .lang button { border: 1px solid var(--line); background: var(--card); padding: 6px 12px; cursor: pointer; font: inherit; }
+    .lang button:first-child { border-radius: 8px 0 0 8px; } .lang button:last-child { border-radius: 0 8px 8px 0; border-left: 0; }
+    .lang button.on { background: var(--brand); color: #fff; border-color: var(--brand); }
+    h1 { font-size: 30px; margin: 32px 0 6px; } .lead { color: var(--muted); margin: 0 0 24px; max-width: 760px; }
+    .grid { display: grid; grid-template-columns: 1.15fr .85fr; gap: 20px; align-items: start; padding-bottom: 40px; }
+    @media (max-width: 880px) { .grid { grid-template-columns: 1fr; } }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
+    .card h2 { font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--brand); margin: 0 0 14px; }
+    label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; text-transform: uppercase; letter-spacing: .05em; }
+    input, select { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; font: inherit; background: #fff; }
+    input.mono { font-family: var(--mono); font-size: 13px; }
+    .row { display: flex; gap: 10px; } .row > * { flex: 1; }
+    .btn { margin-top: 14px; width: 100%; padding: 12px; border: 0; border-radius: 8px; background: var(--brand); color: #fff; font: 600 15px system-ui, sans-serif; cursor: pointer; }
+    .btn:disabled { opacity: .55; cursor: progress; }
+    .status { margin-top: 12px; font-size: 13px; color: var(--muted); min-height: 20px; }
+    .status.err { color: var(--warn); }
+    .badge { display: inline-block; background: var(--brand-soft); color: var(--brand); border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 600; }
+    table { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 14px; }
+    td { padding: 8px 0; border-top: 1px solid var(--line); vertical-align: top; }
+    td:first-child { color: var(--muted); width: 38%; padding-right: 12px; }
+    .addr { font-family: var(--mono); font-size: 12.5px; word-break: break-all; }
+    .addr a { color: var(--ink); }
+    .tag { display: inline-block; margin-left: 6px; font-family: system-ui, sans-serif; font-size: 11px; background: #f0f2f7; color: var(--muted); border-radius: 6px; padding: 1px 7px; }
+    .summary { margin-top: 16px; background: var(--brand-soft); border-radius: 10px; padding: 14px 16px; }
+    .summary b { display: block; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--brand); margin-bottom: 4px; }
+    .meta { margin-top: 12px; font-size: 12px; color: var(--muted); }
+    .meta code { font-family: var(--mono); }
+    .chat { height: 420px; overflow-y: auto; border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: #fafbfe; }
+    .msg { margin: 0 0 12px; white-space: pre-wrap; word-break: break-word; }
+    .msg.you { text-align: right; } .msg.you span { display: inline-block; background: var(--brand); color: #fff; padding: 8px 12px; border-radius: 12px 12px 2px 12px; }
+    .msg.bot span { display: inline-block; background: #fff; border: 1px solid var(--line); padding: 10px 12px; border-radius: 12px 12px 12px 2px; }
+    .steps { font-family: var(--mono); font-size: 11.5px; color: var(--muted); margin: 0 0 6px; }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+    .chips button { border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 5px 10px; font-size: 12.5px; cursor: pointer; }
+    .chips button:disabled { opacity: .5; cursor: progress; }
+    .ask { display: flex; gap: 8px; } .ask .btn { margin: 0; width: auto; padding: 0 18px; }
+    footer { color: var(--muted); font-size: 13px; padding: 0 0 40px; } footer a { color: var(--brand); }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap top">
+      <div class="brand">PHAROS <small data-i18n="tagline"></small></div>
+      <div class="lang"><button data-lang="en">EN</button><button data-lang="pt">PT</button></div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <h1 data-i18n="title"></h1>
+    <p class="lead" data-i18n="lead"></p>
+
+    <div class="grid">
+      <section class="card">
+        <h2 data-i18n="readTitle"></h2>
+        <form id="readForm">
+          <div class="row">
+            <div>
+              <label for="preset" data-i18n="contractLabel"></label>
+              <select id="preset">
+                <option value="USDC">USDC (Circle)</option>
+                <option value="WPROS">WPROS (Wrapped PROS)</option>
+                <option value="custom" data-i18n="custom"></option>
+              </select>
+            </div>
+          </div>
+          <input id="custom" class="mono" placeholder="0x…" hidden style="margin-top:8px" />
+          <label for="holder" data-i18n="walletLabel"></label>
+          <input id="holder" class="mono" placeholder="0x… (optional)" />
+          <button class="btn" id="readBtn" type="submit" data-i18n="readBtn"></button>
+        </form>
+        <div class="status" id="readStatus"></div>
+        <div id="result" hidden>
+          <div><span class="badge" id="blockBadge"></span></div>
+          <table id="rows"></table>
+          <div class="summary"><b data-i18n="plain"></b><span id="summary"></span></div>
+          <div class="meta" id="meta"></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2 data-i18n="agentTitle"></h2>
+        <div class="chat" id="chat"></div>
+        <div class="chips" id="chips"></div>
+        <form class="ask" id="askForm">
+          <input id="question" autocomplete="off" />
+          <button class="btn" id="askBtn" type="submit" data-i18n="send"></button>
+        </form>
+      </section>
+    </div>
+  </main>
+
+  <footer class="wrap" data-i18n-html="footer"></footer>
+
+  <script>
+    const I18N = {
+      en: {
+        tagline: "Agent Arena · Season of AI",
+        title: "Pharos Contract Reader",
+        lead: "Reads the live state of any Pharos mainnet contract through Chain MCP — every value pinned to the same block — and explains it in plain language. Ask the agent in English or Portuguese.",
+        readTitle: "Read contract state", contractLabel: "Contract", custom: "Other address…", walletLabel: "Wallet (optional)", walletPlaceholder: "0x… (optional)",
+        readBtn: "Read via Chain MCP", reading: "Reading via Chain MCP… (usually 5–15 s)", plain: "In plain language",
+        block: (b) => `Read at block ${b}`, explorer: "View on explorer", calls: (n, c, s) => `Chain MCP calls (${n}): ${c} · ${s}s`,
+        agentTitle: "Ask the agent", send: "Ask", placeholder: "e.g. Who owns the USDC contract?", thinking: "Thinking…",
+        welcome: "Hi! I read Pharos contracts through Chain MCP. Ask me about a token, its owner, supply, pause state, upgradeability or a wallet balance.",
+        examples: ["What is the USDC contract?", "Who owns it?", "Is it upgradeable?", "How much WPROS is there?", "What is the current block?"],
+        error: "Something went wrong", invalid: "Paste a valid address: 0x followed by 40 characters.",
+        footer: 'Data source: <a href="https://mcp.pharos.xyz/mcp">Pharos Chain MCP</a> · Token addresses from the <a href="https://docs.pharos.xyz/getting-started/token-registry">official token registry</a> · Read-only: no wallet or private key is ever needed.',
+      },
+      pt: {
+        tagline: "Agent Arena · Season of AI",
+        title: "Leitor de Contratos Pharos",
+        lead: "Lê o estado ao vivo de qualquer contrato da mainnet da Pharos pelo Chain MCP — todos os valores do mesmo bloco — e explica em linguagem simples. Pergunte ao agente em português ou inglês.",
+        readTitle: "Ler estado do contrato", contractLabel: "Contrato", custom: "Outro endereço…", walletLabel: "Carteira (opcional)", walletPlaceholder: "0x… (opcional)",
+        readBtn: "Ler via Chain MCP", reading: "Lendo via Chain MCP… (normalmente 5–15 s)", plain: "Em linguagem simples",
+        block: (b) => `Lido no bloco ${b}`, explorer: "Ver no explorer", calls: (n, c, s) => `Chamadas ao Chain MCP (${n}): ${c} · ${s}s`,
+        agentTitle: "Pergunte ao agente", send: "Enviar", placeholder: "ex.: Quem é o dono do USDC?", thinking: "Pensando…",
+        welcome: "Oi! Eu leio contratos da Pharos pelo Chain MCP. Pergunte sobre um token, o dono, o total em circulação, se está pausado, se pode ser atualizado ou o saldo de uma carteira.",
+        examples: ["O que é o contrato do USDC?", "Quem é o dono?", "Ele pode ser atualizado?", "Quanto WPROS existe?", "Qual o bloco atual?"],
+        error: "Algo deu errado", invalid: "Cole um endereço válido: 0x seguido de 40 caracteres.",
+        footer: 'Fonte dos dados: <a href="https://mcp.pharos.xyz/mcp">Pharos Chain MCP</a> · Endereços de tokens do <a href="https://docs.pharos.xyz/getting-started/token-registry">registro oficial</a> · Somente leitura: nunca é preciso carteira nem chave privada.',
+      },
+    };
+
+    const $ = (id) => document.getElementById(id);
+    const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+    const linkify = (s) => escapeHtml(s).replace(/https:\/\/www\.pharosscan\.xyz\/[^\s<]+/g, (u) => `<a href="${u}" target="_blank" rel="noopener">${u}</a>`);
+    let lang = new URLSearchParams(location.search).get("lang") === "pt" || (!location.search.includes("lang=") && navigator.language?.startsWith("pt")) ? "pt" : "en";
+    let memory = { contract: null, language: lang };
+    let lastRead = null;
+
+    function applyLang() {
+      const t = I18N[lang];
+      document.documentElement.lang = lang === "pt" ? "pt-BR" : "en";
+      document.querySelectorAll("[data-i18n]").forEach((el) => (el.textContent = t[el.dataset.i18n]));
+      document.querySelectorAll("[data-i18n-html]").forEach((el) => (el.innerHTML = t[el.dataset.i18nHtml]));
+      document.querySelectorAll(".lang button").forEach((b) => b.classList.toggle("on", b.dataset.lang === lang));
+      $("question").placeholder = t.placeholder;
+      $("holder").placeholder = t.walletPlaceholder;
+      $("chips").innerHTML = "";
+      t.examples.forEach((q) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.textContent = q;
+        b.onclick = () => ask(q);
+        $("chips").append(b);
+      });
+      if (!$("chat").dataset.used) $("chat").innerHTML = `<p class="msg bot"><span>${escapeHtml(t.welcome)}</span></p>`;
+      if (lastRead) read(lastRead);
+    }
+
+    document.querySelectorAll(".lang button").forEach((b) => (b.onclick = () => { lang = b.dataset.lang; applyLang(); }));
+    $("preset").onchange = () => ($("custom").hidden = $("preset").value !== "custom");
+
+    async function getJson(url) {
+      const res = await fetch(url);
+      const body = await res.json().catch(() => ({ ok: false, error: `HTTP ${res.status}` }));
+      if (!body.ok) throw new Error(body.error || `HTTP ${res.status}`);
+      return body;
+    }
+
+    async function read(params) {
+      const t = I18N[lang];
+      lastRead = params;
+      $("readBtn").disabled = true;
+      $("readStatus").className = "status";
+      $("readStatus").textContent = t.reading;
+      try {
+        const q = new URLSearchParams({ address: params.address, lang, ...(params.holder && { holder: params.holder }) });
+        const data = await getJson(`/api/read?${q}`);
+        $("blockBadge").textContent = t.block(data.rows[2][1]);
+        $("rows").innerHTML = data.rows
+          .map(([label, value, tag, isAddr]) => {
+            const shown = isAddr
+              ? `<span class="addr"><a href="https://www.pharosscan.xyz/address/${escapeHtml(value)}" target="_blank" rel="noopener">${escapeHtml(value)}</a></span>`
+              : escapeHtml(value);
+            return `<tr><td>${escapeHtml(label)}</td><td>${shown}${tag ? `<span class="tag">${escapeHtml(tag)}</span>` : ""}</td></tr>`;
+          })
+          .join("");
+        $("summary").textContent = data.summary;
+        $("meta").innerHTML = `<a href="${data.explorer}" target="_blank" rel="noopener">${t.explorer}</a> · ${escapeHtml(t.calls(data.callCount, data.calls, (data.ms / 1000).toFixed(1)))}`;
+        $("result").hidden = false;
+        $("readStatus").textContent = "";
+      } catch (e) {
+        $("readStatus").className = "status err";
+        $("readStatus").textContent = `${t.error}: ${e.message}`;
+      } finally {
+        $("readBtn").disabled = false;
+      }
+    }
+
+    $("readForm").onsubmit = (e) => {
+      e.preventDefault();
+      const address = $("preset").value === "custom" ? $("custom").value.trim() : $("preset").value;
+      const holder = $("holder").value.trim();
+      const valid = (a) => /^0x[0-9a-fA-F]{40}$/.test(a);
+      if (($("preset").value === "custom" && !valid(address)) || (holder && !valid(holder))) {
+        $("readStatus").className = "status err";
+        $("readStatus").textContent = I18N[lang].invalid;
+        return;
+      }
+      read({ address, holder });
+    };
+
+    function addMessage(kind, text, steps = []) {
+      const p = document.createElement("div");
+      p.className = `msg ${kind}`;
+      p.innerHTML = (steps.length ? `<div class="steps">${steps.map(escapeHtml).join("<br>")}</div>` : "") + `<span>${kind === "bot" ? linkify(text) : escapeHtml(text)}</span>`;
+      $("chat").append(p);
+      $("chat").dataset.used = "1";
+      $("chat").scrollTop = $("chat").scrollHeight;
+      return p;
+    }
+
+    let asking = false;
+    const setAsking = (on) => {
+      asking = on;
+      $("askBtn").disabled = on;
+      document.querySelectorAll("#chips button").forEach((b) => (b.disabled = on));
+    };
+
+    async function ask(question) {
+      // One question at a time: follow-ups need the memory returned by the previous answer.
+      if (!question.trim() || asking) return;
+      addMessage("you", question);
+      const pending = addMessage("bot", I18N[lang].thinking);
+      setAsking(true);
+      try {
+        const q = new URLSearchParams({ q: question, lang: memory.language, ...(memory.contract && { contract: memory.contract }) });
+        const data = await getJson(`/api/ask?${q}`);
+        memory = data.memory;
+        pending.remove();
+        addMessage("bot", data.answer, data.steps);
+      } catch (e) {
+        pending.remove();
+        addMessage("bot", `${I18N[lang].error}: ${e.message}`);
+      } finally {
+        setAsking(false);
+      }
+    }
+
+    $("askForm").onsubmit = (e) => {
+      e.preventDefault();
+      const q = $("question").value;
+      $("question").value = "";
+      ask(q);
+    };
+
+    applyLang();
+    read({ address: "USDC" });
+  </script>
+</body>
+</html>
