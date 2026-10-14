@@ -16,8 +16,17 @@ const FAKE_ENV = { LLM_BASE_URL: `http://127.0.0.1:${fake.address().port}`, LLM_
 
 const CASES = [
   // Tarefa 1 — Doc-Search CLI
-  { name: "docs: ajuda sem argumentos", args: [DOCS], code: 0, expect: /Uso:/ },
-  { name: "docs: --help", args: [DOCS, "--help"], code: 0, expect: /Exemplos:/ },
+  { name: "docs: ajuda sem argumentos", args: [DOCS], code: 0, expect: /Usage:/ },
+  { name: "docs: --help", args: [DOCS, "--help"], code: 0, expect: /Examples:/ },
+  {
+    name: "docs: pergunta direta, sem subcomando",
+    args: [DOCS, "how do I deploy a contract?"],
+    code: 0,
+    expect: /forge[\s\S]*\nSources:\n  1\. .+\n     https:\/\/docs\.pharos\.xyz\//,
+    reject: /\]\(\/|  6\. /,
+  },
+  { name: "docs: pergunta sem resposta", args: [DOCS, "what is the recipe for brazilian feijoada?"], code: 0, expect: /No good answer found in the Pharos docs/, reject: /Sources:/ },
+  { name: "docs: pergunta em português", args: [DOCS, "Qual é o chain ID da mainnet da Pharos?"], code: 0, expect: /1672[\s\S]*Fontes:/ },
   { name: "docs: search", args: [DOCS, "search", "pacific mainnet rpc", "--limit", "3"], code: 0, expect: /^1\. [\s\S]*docs\.pharos\.xyz/m },
   { name: "docs: search respeita --limit", args: [DOCS, "links", "token", "--limit", "2"], code: 0, expect: /^2\. /m, reject: /^3\. /m },
   { name: "docs: links", args: [DOCS, "links", "skill engine"], code: 0, expect: /^1\. .+\n\s+https:/m },
@@ -25,11 +34,10 @@ const CASES = [
   { name: "docs: ask com --goal", args: [DOCS, "ask", "Qual o RPC da mainnet?", "--goal", "configurar minha carteira"], code: 0, expect: /rpc\.pharos\.xyz/ },
   { name: "docs: page por URL", args: [DOCS, "page", "https://docs.pharos.xyz/getting-started/token-registry"], code: 0, expect: new RegExp(USDC, "i") },
   { name: "docs: page por caminho", args: [DOCS, "page", "/getting-started/network/pacific-mainnet"], code: 0, expect: /1672/ },
-  { name: "docs: page de outro site", args: [DOCS, "page", "https://google.com"], code: 1, expect: /só abre páginas/ },
-  { name: "docs: comando inválido", args: [DOCS, "xyz", "abc"], code: 1, expect: /Comando desconhecido/ },
-  { name: "docs: comando sem texto", args: [DOCS, "search"], code: 1, expect: /precisa de um texto/ },
-  { name: "docs: --limit inválido", args: [DOCS, "search", "rpc", "--limit", "abc"], code: 1, expect: /--limit precisa/ },
-  { name: "docs: opção desconhecida", args: [DOCS, "search", "rpc", "--xpto"], code: 1, expect: /Opção desconhecida/ },
+  { name: "docs: page de outro site", args: [DOCS, "page", "https://google.com"], code: 1, expect: /only opens pages/ },
+  { name: "docs: comando sem texto", args: [DOCS, "search"], code: 1, expect: /search needs some text/ },
+  { name: "docs: --limit inválido", args: [DOCS, "search", "rpc", "--limit", "abc"], code: 1, expect: /--limit must be/ },
+  { name: "docs: opção desconhecida", args: [DOCS, "search", "rpc", "--xpto"], code: 1, expect: /Unknown option/ },
   { name: "docs: termo sem resultado", args: [DOCS, "search", "qwzxjkvbnmplokij"], code: 0, expect: /./ },
 
   // Tarefa 2 — Read Contract State (script)
@@ -73,18 +81,31 @@ const CASES = [
   { name: "agente IA: IA fora do ar", args: [AGENT_AI, "oi"], env: { LLM_BASE_URL: "http://127.0.0.1:9", PHAROS_ENV_FILE: "nenhum.env" }, code: 1, expect: /não foi possível falar com a IA/ },
 
   // Tarefa 3 — Event/Log Monitor
-  { name: "monitor: USDC --once", args: [MONITOR, "USDC", "--lookback", "1000", "--once"], code: 0, expect: /Blocos [\d.]+ a [\d.]+ verificados\.\s+Resumo: \d+ transfers/ },
-  { name: "monitor: filtro --min alto", args: [MONITOR, "USDC", "--lookback", "1000", "--min", "1000000000", "--once"], code: 0, expect: /\d+ transfers vistos, 0 com valor/ },
-  { name: "monitor: --min decimal", args: [MONITOR, "USDC", "--lookback", "300", "--min", "0.5", "--once"], code: 0, expect: /valor ≥ 0\.5 USDC/ },
-  { name: "monitor: WPROS --once --links", args: [MONITOR, "WPROS", "--lookback", "500", "--once", "--links"], code: 0, expect: /Resumo:/ },
-  { name: "monitor: token inválido", args: [MONITOR, "nada"], code: 1, expect: /Token inválido/ },
-  { name: "monitor: --min sem número", args: [MONITOR, "USDC", "--min", "abc"], code: 1, expect: /--min precisa de um número/ },
-  { name: "monitor: --interval baixo", args: [MONITOR, "USDC", "--interval", "0"], code: 1, expect: /--interval mínimo/ },
-  { name: "monitor: --lookback acima do limite", args: [MONITOR, "USDC", "--lookback", "5000"], code: 1, expect: /--lookback precisa/ },
-  { name: "monitor: endereço sem contrato", args: [MONITOR, DEAD, "--once"], code: 1, expect: /não respondeu como um token ERC20/ },
+  {
+    name: "monitor: USDC --once decodifica os campos",
+    args: [MONITOR, "USDC", "--lookback", "1000", "--once"],
+    code: 0,
+    expect: /topic0 0xddf252ad[\s\S]*\[block [\d,]+\] (TRANSFER|MINT|BURN) [\d,.]+ USDC  from .+ → to .+\n    tx 0x[0-9a-f]{64}\n[\s\S]*Blocks [\d,]+ to [\d,]+ checked\.\s+Summary: \d+ transfers/,
+  },
+  { name: "monitor: filtro --min alto", args: [MONITOR, "USDC", "--lookback", "1000", "--min", "1000000000", "--once"], code: 0, expect: /\d+ transfers seen, 0 with amount/ },
+  { name: "monitor: --min decimal", args: [MONITOR, "USDC", "--lookback", "300", "--min", "0.5", "--once"], code: 0, expect: /amount ≥ 0\.5 USDC/ },
+  { name: "monitor: WPROS --once --links", args: [MONITOR, "WPROS", "--lookback", "500", "--once", "--links"], code: 0, expect: /Summary:/, reject: /    tx 0x/ },
+  {
+    name: "monitor: modo ao vivo continua rodando",
+    args: [MONITOR, "USDC", "--lookback", "0", "--interval", "2"],
+    killAfter: 25_000,
+    code: null,
+    expect: /history loaded \(up to block [\d,]+\)\. Watching for new events/,
+    reject: /Error|Warning/,
+  },
+  { name: "monitor: token inválido", args: [MONITOR, "nada"], code: 1, expect: /Invalid token/ },
+  { name: "monitor: --min sem número", args: [MONITOR, "USDC", "--min", "abc"], code: 1, expect: /--min needs a number/ },
+  { name: "monitor: --interval baixo", args: [MONITOR, "USDC", "--interval", "0"], code: 1, expect: /--interval must be at least/ },
+  { name: "monitor: --lookback acima do limite", args: [MONITOR, "USDC", "--lookback", "5000"], code: 1, expect: /--lookback must be/ },
+  { name: "monitor: endereço sem contrato", args: [MONITOR, DEAD, "--once"], code: 1, expect: /did not respond as an ERC20 token/ },
 ];
 
-function run({ args, env = {}, input }) {
+function run({ args, env = {}, input, killAfter }) {
   return new Promise((resolve) => {
     const start = performance.now();
     const cleanEnv = Object.fromEntries(
@@ -95,7 +116,7 @@ function run({ args, env = {}, input }) {
     let out = "";
     child.stdout.on("data", (d) => (out += d));
     child.stderr.on("data", (d) => (out += d));
-    const timer = setTimeout(() => child.kill(), 120_000);
+    const timer = setTimeout(() => child.kill(), killAfter ?? 120_000);
     child.on("close", (code) => {
       clearTimeout(timer);
       resolve({ code, out, secs: (performance.now() - start) / 1000 });

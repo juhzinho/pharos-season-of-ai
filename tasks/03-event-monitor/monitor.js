@@ -1,28 +1,25 @@
 #!/usr/bin/env node
-import {
-  decodeEventLog,
-  decodeFunctionResult,
-  encodeFunctionData,
-  erc20Abi,
-  isAddress,
-  parseUnits,
-  toEventSelector,
-} from "viem";
-import { connect, callJson, isTransient, CHAIN_MCP_URL } from "../../lib/mcp.js";
-import { explorerTx, formatAmount, formatInteger, labeled, short } from "../../lib/format.js";
+import { isAddress, parseUnits } from "viem";
+import { connect, isTransient, CHAIN_MCP_URL } from "../../lib/mcp.js";
+import { explorerTx, formatAmount, formatInteger, labeled } from "../../lib/format.js";
 import { resolveToken } from "../../lib/tokens.js";
+import { fetchTransfers, latestBlock, MAX_WINDOW, readTokenInfo, TRANSFER_TOPIC, transferKey } from "../../lib/transfers.js";
 
-const TRANSFER_TOPIC = toEventSelector("Transfer(address,address,uint256)");
-const MAX_WINDOW = 1000; // get_logs rejects ranges larger than 1000 blocks
+const USAGE = `Usage: node tasks/03-event-monitor/monitor.js [USDC|WPROS|<token address>] [options]
 
-const USAGE = `Uso: node tasks/03-event-monitor/monitor.js [USDC|WPROS|<token>] [opções]
+Watches ERC20 Transfer events through Chain MCP and prints each new one as it happens.
 
-Opções:
-  --min <valor>        só mostra transfers com valor ≥ valor (padrão 0)
-  --interval <s>       segundos entre verificações no modo ao vivo (padrão 5, mínimo 2)
-  --lookback <blocos>  histórico inicial, de 0 a ${MAX_WINDOW} blocos (padrão 200)
-  --once               varre o histórico, mostra o resumo e sai
-  --links              mostra o link do explorer de cada transação`;
+Options:
+  --min <amount>       only show transfers ≥ amount, in token units (default 0)
+  --interval <s>       seconds between checks in live mode (default 5, minimum 2)
+  --lookback <blocks>  initial history, 0 to ${MAX_WINDOW} blocks (default 200)
+  --once               scan the history, print a summary and exit
+  --links              print the explorer link of each transaction`;
+
+const LANG = "en";
+const HEARTBEAT_MS = 60_000;
+// Each live cycle re-reads this many already-seen blocks in case the node indexed their logs late; `reported` drops the repeats.
+const OVERLAP = 5;
 
 function fail(message) {
   console.log(`${message}\n\n${USAGE}`);
@@ -32,7 +29,7 @@ function fail(message) {
 function parseArgs(argv) {
   const opts = { token: undefined, min: "0", interval: 5, lookback: 200, once: false, links: false };
   const numeric = (flag, value) => {
-    if (value === undefined || value.startsWith("--") || !/^\d+(\.\d+)?$/.test(value)) fail(`${flag} precisa de um número.`);
+    if (value === undefined || value.startsWith("--") || !/^\d+(\.\d+)?$/.test(value)) fail(`${flag} needs a number.`);
     return value;
   };
   for (let i = 0; i < argv.length; i++) {
@@ -42,110 +39,95 @@ function parseArgs(argv) {
     else if (a === "--lookback") opts.lookback = Number(numeric(a, argv[++i]));
     else if (a === "--once") opts.once = true;
     else if (a === "--links") opts.links = true;
-    else if (a === "--help") {
+    else if (a === "--help" || a === "-h") {
       console.log(USAGE);
       process.exit(0);
-    } else if (a.startsWith("--")) fail(`Opção desconhecida: ${a}`);
-    else if (opts.token) fail(`Argumento a mais: ${a}`);
+    } else if (a.startsWith("--")) fail(`Unknown option: ${a}`);
+    else if (opts.token) fail(`Unexpected argument: ${a}`);
     else opts.token = a;
   }
-  if (opts.interval < 2) fail("--interval mínimo é 2 segundos.");
-  if (!Number.isInteger(opts.lookback) || opts.lookback > MAX_WINDOW) fail(`--lookback precisa ser um inteiro de 0 a ${MAX_WINDOW}.`);
+  if (opts.interval < 2) fail("--interval must be at least 2 seconds.");
+  if (!Number.isInteger(opts.lookback) || opts.lookback > MAX_WINDOW) fail(`--lookback must be an integer from 0 to ${MAX_WINDOW}.`);
   return opts;
 }
 
 const opts = parseArgs(process.argv.slice(2));
 const token = resolveToken(opts.token);
-if (!isAddress(token)) fail(`Token inválido: ${opts.token}`);
+if (!isAddress(token)) fail(`Invalid token: ${opts.token}`);
 
 let client;
 try {
   client = await connect(CHAIN_MCP_URL, "pharos-event-monitor");
 } catch (e) {
-  console.error(`Erro: não foi possível conectar ao Chain MCP (${e.message})`);
+  console.error(`Error: could not connect to Chain MCP (${e.message})`);
   process.exit(1);
 }
 
-async function readToken(functionName) {
-  const data = encodeFunctionData({ abi: erc20Abi, functionName });
-  const { result } = await callJson(client, "eth_call", { transaction: { to: token, data } });
-  return decodeFunctionResult({ abi: erc20Abi, functionName, data: result });
-}
-
-async function latestBlock() {
-  return Number((await callJson(client, "get_block_number")).blockNumber);
-}
-
-const [decimals, symbol, initialHead] = await Promise.all([readToken("decimals"), readToken("symbol"), latestBlock()]).catch(
-  (e) => {
-    console.error(
-      isTransient(e)
-        ? `Erro: o Chain MCP não está respondendo agora (${e.message}). Tente de novo em alguns segundos.`
-        : `Erro: ${token} não respondeu como um token ERC20 (${e.shortMessage ?? e.message})`
-    );
-    process.exit(1);
-  }
-);
+const [{ decimals, symbol }, initialHead] = await Promise.all([readTokenInfo(client, token), latestBlock(client)]).catch((e) => {
+  console.error(
+    isTransient(e)
+      ? `Error: Chain MCP is not responding right now (${e.message}). Try again in a few seconds.`
+      : `Error: ${token} did not respond as an ERC20 token (${e.shortMessage ?? e.message})`
+  );
+  process.exit(1);
+});
 
 const minRaw = parseUnits(opts.min, decimals);
 const stats = { seen: 0, alerts: 0, volume: 0n, skipped: 0 };
+const reported = new Map(); // event key -> block
+let lastOutput = Date.now();
 
-async function scan(fromBlock, toBlock) {
-  for (let start = fromBlock; start <= toBlock; start += MAX_WINDOW) {
-    const end = Math.min(start + MAX_WINDOW - 1, toBlock);
-    const logs = await callJson(client, "get_logs", { address: token, topics: [TRANSFER_TOPIC], fromBlock: start, toBlock: end });
-    logs.sort((a, b) => Number(a.blockNumber) - Number(b.blockNumber) || Number(a.logIndex) - Number(b.logIndex));
-    for (const log of logs) {
-      let args;
-      try {
-        ({ args } = decodeEventLog({ abi: erc20Abi, eventName: "Transfer", data: log.data, topics: log.topics }));
-      } catch {
-        stats.skipped++; // same topic, different layout (e.g. an NFT Transfer)
-        continue;
-      }
-      stats.seen++;
-      stats.volume += args.value;
-      if (args.value < minRaw) continue;
-      stats.alerts++;
-      const kind = /^0x0{40}$/.test(args.from) ? "MINT    " : /^0x0{40}$/.test(args.to) ? "BURN    " : "Transfer";
-      console.log(
-        `[bloco ${formatInteger(log.blockNumber)}] ${kind} ${formatAmount(args.value, decimals, 6)} ${symbol}  ` +
-          `${labeled(args.from)} → ${labeled(args.to)}  tx ${short(log.transactionHash)}` +
-          (opts.links ? `\n    ${explorerTx(log.transactionHash)}` : "")
-      );
-    }
+async function scan(fromBlock, toBlock, live) {
+  const { transfers, skipped } = await fetchTransfers(client, token, fromBlock, toBlock);
+  stats.skipped += skipped;
+  for (const t of transfers) {
+    const key = transferKey(t);
+    if (reported.has(key)) continue;
+    reported.set(key, t.block);
+    stats.seen++;
+    stats.volume += t.value;
+    if (t.value < minRaw) continue;
+    stats.alerts++;
+    lastOutput = Date.now();
+    console.log(
+      `${live ? "NEW " : ""}[block ${formatInteger(t.block, LANG)}] ${t.kind.toUpperCase()} ${formatAmount(t.value, decimals, 6, LANG)} ${symbol}` +
+        `  from ${labeled(t.from, {}, LANG)} → to ${labeled(t.to, {}, LANG)}` +
+        `\n    tx ${opts.links ? explorerTx(t.tx) : t.tx}`
+    );
   }
+  for (const [key, block] of reported) if (block < toBlock - OVERLAP * 2) reported.delete(key);
 }
 
 function summary() {
   console.log(
-    `\nResumo: ${stats.seen} transfers vistos, ${stats.alerts} com valor ≥ ${opts.min} ${symbol}, ` +
-      `volume total ${formatAmount(stats.volume, decimals)} ${symbol}` +
-      (stats.skipped ? ` (${stats.skipped} eventos ignorados por não serem ERC20)` : "")
+    `\nSummary: ${stats.seen} transfers seen, ${stats.alerts} with amount ≥ ${opts.min} ${symbol}, ` +
+      `total volume ${formatAmount(stats.volume, decimals, 2, LANG)} ${symbol}` +
+      (stats.skipped ? ` (${stats.skipped} non-ERC20 events skipped)` : "")
   );
 }
 
-console.log(`Monitorando eventos Transfer de ${symbol} (${token}) via Chain MCP`);
-console.log(`Filtro: valor ≥ ${opts.min} ${symbol} | intervalo ${opts.interval}s | histórico inicial ${opts.lookback} blocos\n`);
+console.log(`Watching Transfer events of ${symbol} (${token}) via Chain MCP`);
+console.log(`get_logs filter: address ${token}, topic0 ${TRANSFER_TOPIC} (Transfer(address,address,uint256))`);
+console.log(`Filter: amount ≥ ${opts.min} ${symbol} | interval ${opts.interval}s | initial history ${opts.lookback} blocks\n`);
 
 let head = initialHead;
+const firstBlock = Math.max(0, head - opts.lookback + 1);
 try {
-  if (opts.lookback > 0) await scan(Math.max(0, head - opts.lookback + 1), head);
+  if (opts.lookback > 0) await scan(firstBlock, head, false);
 } catch (e) {
-  console.error(`Erro ao ler o histórico: ${e.message}`);
+  console.error(`Error reading history: ${e.message}`);
   process.exit(1);
 }
 
 if (opts.once) {
-  if (opts.lookback > 0) {
-    console.log(`\nBlocos ${formatInteger(Math.max(0, head - opts.lookback + 1))} a ${formatInteger(head)} verificados.`);
-  }
+  if (opts.lookback > 0) console.log(`\nBlocks ${formatInteger(firstBlock, LANG)} to ${formatInteger(head, LANG)} checked.`);
   summary();
   await client.close().catch(() => {});
   process.exit(0);
 }
 
-console.log(`\n— histórico carregado (até o bloco ${formatInteger(head)}). Aguardando novos eventos… (Ctrl+C para sair)\n`);
+console.log(`\n— history loaded (up to block ${formatInteger(head, LANG)}). Watching for new events… (Ctrl+C to stop)\n`);
+lastOutput = Date.now();
 process.on("SIGINT", async () => {
   summary();
   await client.close().catch(() => {});
@@ -156,14 +138,18 @@ let failures = 0;
 for (;;) {
   await new Promise((r) => setTimeout(r, opts.interval * 1000));
   try {
-    const next = await latestBlock();
+    const next = await latestBlock(client);
     if (next > head) {
-      await scan(head + 1, next);
+      await scan(Math.max(firstBlock, head + 1 - OVERLAP), next, true);
       head = next;
     }
     failures = 0;
+    if (Date.now() - lastOutput >= HEARTBEAT_MS) {
+      console.log(`  (still watching — block ${formatInteger(head, LANG)}, no new matching transfers in the last minute)`);
+      lastOutput = Date.now();
+    }
   } catch (e) {
     failures++;
-    console.error(`Aviso: ${e.message} — tentando de novo no próximo ciclo (${failures} falha(s) seguidas)`);
+    console.error(`Warning: ${e.message} — retrying next cycle (${failures} failure(s) in a row)`);
   }
 }

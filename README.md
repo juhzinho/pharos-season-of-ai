@@ -4,9 +4,9 @@
 
 | Task | Folder | Run |
 |---|---|---|
-| Doc-Search CLI | [`tasks/01-doc-search-cli`](tasks/01-doc-search-cli/README.md) | `npm run docs -- search "rpc mainnet"` |
-| Read Contract State | [`tasks/02-read-contract-state`](tasks/02-read-contract-state/README.md) · [live demo](https://pharos-contract-reader.vercel.app) | `npm run read -- USDC` / `npm run agent` |
-| Event/Log Monitor | [`tasks/03-event-monitor`](tasks/03-event-monitor/README.md) | `npm run monitor -- USDC --once` |
+| Doc-Search CLI | [`tasks/01-doc-search-cli`](tasks/01-doc-search-cli/README.md) · [live demo](https://pharos-contract-reader.vercel.app/#docs) | `npm run docs -- "how do I deploy a contract?"` |
+| Read Contract State | [`tasks/02-read-contract-state`](tasks/02-read-contract-state/README.md) · [live demo](https://pharos-contract-reader.vercel.app/#read) | `npm run read -- USDC` / `npm run agent` |
+| Event/Log Monitor | [`tasks/03-event-monitor`](tasks/03-event-monitor/README.md) · [live demo](https://pharos-contract-reader.vercel.app/#events) | `npm run monitor -- USDC` |
 
 Setup: `npm install` (Node.js 20.12+). Read-only: no wallet or private key is ever needed.
 
@@ -34,13 +34,13 @@ Requer Node.js 20.12+ (testado no Node 22).
 
 ## Tarefa 1 — Doc-Search CLI (Easy, 50 pts)
 
-Wrapper de linha de comando sobre o Developer Docs MCP (`searchDocumentation`, `askQuestion`, `getPage`).
+Wrapper de linha de comando sobre o Developer Docs MCP (`askQuestion`, `searchDocumentation`, `getPage`). Recebe a pergunta direto, devolve uma resposta curta com os links das páginas de origem e, quando a documentação não cobre o assunto, avisa em vez de inventar. Detalhes e 3 exemplos reais: [`tasks/01-doc-search-cli/README.md`](tasks/01-doc-search-cli/README.md). Ao vivo: [#docs](https://pharos-contract-reader.vercel.app/#docs).
 
 ```bash
-npm run docs -- search "chain id rpc mainnet" --limit 3
-npm run docs -- ask "Como faço deploy de um ERC20 na Pharos?" --goal "lançar meu primeiro token"
-npm run docs -- links "skill engine"
-npm run docs -- page /getting-started/token-registry
+npm link                                   # opcional: instala o comando pharos-docs
+pharos-docs "how do I deploy a contract?"  # ou: npm run docs -- "how do I deploy a contract?"
+pharos-docs search "chain id rpc mainnet" --limit 3
+pharos-docs page /getting-started/token-registry
 ```
 
 ---
@@ -55,7 +55,7 @@ Lê o estado ativo de um contrato da Pharos pelo Chain MCP e explica em linguage
 
 Todos usam o mesmo código de leitura (`lib/contract-state.js`).
 
-**Demonstração ao vivo:** [pharos-contract-reader.vercel.app](https://pharos-contract-reader.vercel.app/): leitura do contrato e chat com o agente direto no navegador, em inglês ou português (`?lang=pt`). As funções `api/read.js` e `api/ask.js` chamam o Chain MCP no servidor, porque o endpoint não libera CORS para navegadores. Para rodar localmente: `npm run web`.
+**Demonstração ao vivo:** [pharos-contract-reader.vercel.app](https://pharos-contract-reader.vercel.app/): leitura do contrato e chat com o agente direto no navegador, em inglês ou português (`?lang=pt`). O mesmo site tem abas para as tarefas 1 e 3. As funções em `api/` chamam o Chain MCP no servidor, porque o endpoint não libera CORS para navegadores. Para rodar localmente: `npm run web`.
 
 ### Contrato escolhido: USDC oficial na Pharos
 
@@ -162,7 +162,7 @@ npm run agent:ai -- "O que é o contrato do USDC e quem controla ele?"
 
 ## Tarefa 3 — Event/Log Monitor (Easy, 50 pts)
 
-Monitora eventos `Transfer` de um token pelo Chain MCP (`get_logs` + `get_block_number`). Carrega o histórico recente e depois acompanha blocos novos em tempo real, respeitando o limite de 1000 blocos por consulta. Identifica MINT e BURN e rotula endereços conhecidos.
+Monitora eventos `Transfer` de um token pelo Chain MCP (`get_logs` filtrado pelo endereço do contrato e pela assinatura do evento, + `get_block_number`). Carrega o histórico recente e depois acompanha blocos novos em tempo real, sem repetir eventos (chave `tx hash + log index`), respeitando o limite de 1000 blocos por consulta. Identifica MINT e BURN e rotula endereços conhecidos. Detalhes e uma execução real pegando eventos ao vivo: [`tasks/03-event-monitor/README.md`](tasks/03-event-monitor/README.md). Ao vivo: [#events](https://pharos-contract-reader.vercel.app/#events).
 
 ```bash
 npm run monitor -- USDC --min 500                  # ao vivo, só transfers ≥ 500 USDC
